@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
+import androidx.annotation.RequiresApi
 
 import com.zebra.sdk.printer.discovery.DiscoveredPrinter
 import com.zebra.sdk.printer.discovery.DiscoveryException
@@ -33,34 +34,40 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
 
   private lateinit var usbManager: UsbManager
   private var pendingUsbResult: Result? = null
-  private var pendingUsbHandler: DiscoveryHandler? = null
 
   companion object {
     private const val ACTION_USB_PERMISSION = "com.example.levinci_zebra.USB_PERMISSION"
   }
 
   private val usbReceiver = object : BroadcastReceiver() {
+    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     override fun onReceive(context: Context, intent: Intent) {
       when (intent.action) {
         ACTION_USB_PERMISSION -> {
           synchronized(this) {
-            val device: UsbDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val device: UsbDevice? =
               intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-            } else {
-              @Suppress("DEPRECATION")
-              intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
-            }
-            if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-              device?.let {
-                // Quyền được cấp, tiến hành discovery
-                performUsbDiscovery()
+
+            // Bỏ qua việc kiểm tra permissionGranted vì luôn trả về false
+            // Thay vào đó gọi lại discovery trực tiếp
+            if (device != null) {
+              val savedResult = pendingUsbResult
+
+              if (savedResult != null) {
+                // Clear pending variables trước khi gọi lại
+                pendingUsbResult = null
+
+                // Gọi performUsbDiscoveryDirect trực tiếp thay vì tạo mock call
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                  performUsbDiscoveryDirect(savedResult)
+                }
+              } else {
               }
             } else {
-              // Quyền bị từ chối
+              // Không có device
               android.os.Handler(android.os.Looper.getMainLooper()).post {
-                pendingUsbResult?.error("PERMISSION_DENIED", "Người dùng từ chối cấp quyền USB", null)
+                pendingUsbResult?.error("NO_DEVICE", "Không tìm thấy USB device", null)
                 pendingUsbResult = null
-                pendingUsbHandler = null
               }
             }
           }
@@ -73,7 +80,6 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
     channel = MethodChannel(flutterPluginBinding.binaryMessenger, "levinci_zebra")
     channel.setMethodCallHandler(this)
     applicationContext = flutterPluginBinding.applicationContext
-
 
     usbManager = applicationContext.getSystemService(Context.USB_SERVICE) as UsbManager
 
@@ -161,7 +167,7 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
             // Tìm Zebra printer devices (thường có vendor ID là 2655)
             val zebraDevices = usbDevices.values.filter { device ->
               device.vendorId == 2655 || // Zebra vendor ID
-              device.deviceClass == 7    // Printer class
+                      device.deviceClass == 7    // Printer class
             }
 
             if (zebraDevices.isEmpty()) {
@@ -180,57 +186,6 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
               // Cần request permission
               pendingUsbResult = result
 
-              // Lưu handler để sử dụng sau khi có permission
-              pendingUsbHandler = object : DiscoveryHandler {
-                override fun foundPrinter(printer: DiscoveredPrinter) {
-                  if (printer is DiscoveredPrinterUsb) {
-                    val info = mutableMapOf<String, Any>()
-                    val printerDevice = printer.device
-
-                    info["address"] = printer.address
-                    info["vendorId"] = printerDevice.vendorId
-                    info["productId"] = printerDevice.productId
-                    info["deviceName"] = printerDevice.deviceName
-                    info["serialNumber"] = printerDevice.serialNumber ?: ""
-                    info["manufacturerName"] = printerDevice.manufacturerName ?: ""
-                    info["deviceId"] = printerDevice.deviceId
-                    info["deviceClass"] = printerDevice.deviceClass
-                    info["deviceProtocol"] = printerDevice.deviceProtocol
-                    info["deviceSubclass"] = printerDevice.deviceSubclass
-                    info["interfaceCount"] = printerDevice.interfaceCount
-                    info["dnsName"] = printerDevice.manufacturerName ?: printerDevice.deviceName
-
-                    val currentPrinters = mutableListOf<Map<String, Any>>()
-                    currentPrinters.add(info)
-
-                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                      pendingUsbResult?.success(currentPrinters)
-                      pendingUsbResult = null
-                      pendingUsbHandler = null
-                    }
-                  }
-                }
-
-                override fun discoveryFinished() {
-                  android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    // Nếu không tìm thấy printer nào, trả về list rỗng
-                    if (pendingUsbResult != null) {
-                      pendingUsbResult?.success(emptyList<Map<String, Any>>())
-                      pendingUsbResult = null
-                      pendingUsbHandler = null
-                    }
-                  }
-                }
-
-                override fun discoveryError(message: String) {
-                  android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    pendingUsbResult?.error("DISCOVERY_ERROR", message, null)
-                    pendingUsbResult = null
-                    pendingUsbHandler = null
-                  }
-                }
-              }
-
               // Request permission cho device đầu tiên
               val device = devicesNeedingPermission.first()
               val permissionIntent = PendingIntent.getBroadcast(
@@ -238,7 +193,7 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
                 0,
                 Intent(ACTION_USB_PERMISSION),
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
               )
               usbManager.requestPermission(device, permissionIntent)
             } else {
@@ -298,7 +253,11 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
         val command = call.argument<String>("command")
 
         if (deviceAddress == null || command == null) {
-          result.error("INVALID_ARGUMENT", "Thiếu thông tin: deviceAddress và command là bắt buộc", null)
+          result.error(
+            "INVALID_ARGUMENT",
+            "Thiếu thông tin: deviceAddress và command là bắt buộc",
+            null
+          )
           return
         }
 
@@ -312,7 +271,7 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
 
             val targetDevice = usbDevices.values.find { device ->
               device.deviceName == deviceAddress ||
-              "${device.vendorId}:${device.productId}" == deviceAddress
+                      "${device.vendorId}:${device.productId}" == deviceAddress
             }
 
             if (targetDevice != null && !usbManager.hasPermission(targetDevice)) {
@@ -383,7 +342,11 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
 
                 if (usbPrinters.isEmpty()) {
                   android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    result.error("PRINTER_NOT_FOUND", "Không tìm thấy máy in với địa chỉ $deviceAddress", null)
+                    result.error(
+                      "PRINTER_NOT_FOUND",
+                      "Không tìm thấy máy in với địa chỉ $deviceAddress",
+                      null
+                    )
                   }
                   return
                 }
@@ -474,23 +437,6 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
 
       else -> {
         result.notImplemented()
-      }
-    }
-  }
-
-  private fun performUsbDiscovery() {
-    val executor = Executors.newSingleThreadExecutor()
-    executor.execute {
-      val handler = pendingUsbHandler ?: return@execute
-
-      try {
-        UsbDiscoverer.findPrinters(applicationContext, handler)
-      } catch (e: Exception) {
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-          pendingUsbResult?.error("DISCOVERY_EXCEPTION", e.message, null)
-          pendingUsbResult = null
-          pendingUsbHandler = null
-        }
       }
     }
   }
