@@ -2,8 +2,6 @@ import Flutter
 import UIKit
 
 public class LevinciZebraPlugin: NSObject, FlutterPlugin {
-  private let zebraPrintQueue = DispatchQueue(label: "com.yourapp.zebra.print.queue")
-  
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
       name: "levinci_zebra", binaryMessenger: registrar.messenger())
@@ -66,48 +64,29 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
   }
 
   func sendCommand(
-    ipAddress: String,
-    port: Int,
-    command: String,
-    result: @escaping FlutterResult
-  ) {
-    let timeoutSeconds: TimeInterval = 5
+  ipAddress: String,
+  port: Int,
+  command: String,
+  result: @escaping FlutterResult
+) {
+  let timeoutSeconds: TimeInterval = 5
 
-    // Protect shared flags
-    let lock = NSLock()
-    var didFinish = false
-    var cancelled = false
+  // đảm bảo result chỉ trả 1 lần
+  let lock = NSLock()
+  var didFinish = false
+  var cancelled = false
 
-    func isCancelled() -> Bool {
-      lock.lock()
-      defer { lock.unlock() }
-      return cancelled
-    }
+  func isCancelled() -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    return cancelled
+  }
 
-    func finish(_ value: Any) {
-      lock.lock()
-      defer { lock.unlock() }
-      guard !didFinish else { return }
-      didFinish = true
-      DispatchQueue.main.async { result(value) }
-    }
-
-    // giữ connection để timeout có thể close nhằm unblock nhanh
-    var activeConnection: TcpPrinterConnection?
-    let connLock = NSLock()
-
-    func setActiveConnection(_ c: TcpPrinterConnection?) {
-      connLock.lock()
-      defer { connLock.unlock() }
-      activeConnection = c
-    }
-
-  func closeActiveConnection() {
-    connLock.lock()
-    let c = activeConnection
-    activeConnection = nil
-    connLock.unlock()
-    c?.close()
+  func finish(_ value: Any) {
+    lock.lock()
+    defer { lock.unlock() }
+    guard !didFinish else { return }
+    didFinish = true
+    DispatchQueue.main.async { result(value) }
   }
 
   zebraPrintQueue.async { [weak self] in
@@ -122,9 +101,6 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
       ))
       return
     }
-
-    setActiveConnection(connection)
-    defer { setActiveConnection(nil) }
 
     var error: NSError?
 
@@ -144,12 +120,33 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
       return
     }
 
+    // ✅ 1) CLEAR all previous queued formats/jobs in printer buffer
+    if isCancelled() {
+      connection.close()
+      return
+    }
+
+    var clearErr: NSError?
+    let clearData = "~JA".data(using: .utf8)!   // Zebra: Cancel All / clear buffer
+    connection.write(clearData, error: &clearErr)
+
+    if let err = clearErr {
+      connection.close()
+      finish(FlutterError(
+        code: "FAILED_TO_CLEAR_BUFFER",
+        message: err.localizedDescription,
+        details: nil
+      ))
+      return
+    }
+
     do {
       if isCancelled() {
         connection.close()
         return
       }
 
+      // (tuỳ bạn) phần này có thể bỏ nếu không cần check control language
       guard let printer = try ZebraPrinterFactory.getInstance(connection) as? ZebraPrinter else {
         connection.close()
         finish(FlutterError(
@@ -167,6 +164,7 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
         return
       }
 
+      // ✅ 2) Send actual print command
       let data = command.data(using: .utf8) ?? Data()
       connection.write(data, error: &error)
 
@@ -192,7 +190,7 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
     }
   }
 
-  // Timeout (chạy trên cùng serial queue để giữ tuần tự)
+  // timeout 5s: nếu chưa finish thì trả lỗi (vẫn tuần tự vì chạy trên cùng queue)
   zebraPrintQueue.asyncAfter(deadline: .now() + timeoutSeconds) {
     lock.lock()
     let alreadyFinished = didFinish
@@ -200,9 +198,6 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
     lock.unlock()
 
     guard !alreadyFinished else { return }
-
-    // cố gắng close connection để unblock các call đang treo
-    closeActiveConnection()
 
     finish(FlutterError(
       code: "TIMEOUT",
