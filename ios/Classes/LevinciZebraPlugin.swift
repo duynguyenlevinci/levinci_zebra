@@ -2,8 +2,17 @@ import Flutter
 import UIKit
 
 public class LevinciZebraPlugin: NSObject, FlutterPlugin {
+  // Serial queue để in tuần tự (1 lệnh 1 lần)
+private let zebraPrintQueue = DispatchQueue(label: "com.yourapp.zebra.print.queue")
+
+// Lock cho trạng thái reconnect
+private let stateLock = NSLock()
+
+// true = lần trước mất kết nối / lỗi => lần tới connect OK thì clear (~JA) 1 lần
+private var needClearOnNextConnect: Bool = true
+
   public static func register(with registrar: FlutterPluginRegistrar) {
-    let channel = FlutterMethodChannel(
+    let channel = FlutterMethodChannel( 
       name: "levinci_zebra", binaryMessenger: registrar.messenger())
     let instance = LevinciZebraPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
@@ -63,7 +72,9 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
     return result
   }
 
-  func sendCommand(
+  private var needClearOnNextConnect = true
+
+func sendCommand(
   ipAddress: String,
   port: Int,
   command: String,
@@ -71,110 +82,98 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
 ) {
   let timeoutSeconds: TimeInterval = 5
 
-  // đảm bảo result chỉ trả 1 lần
   let lock = NSLock()
   var didFinish = false
   var cancelled = false
 
-  func isCancelled() -> Bool {
-    lock.lock(); defer { lock.unlock() }
-    return cancelled
-  }
-
   func finish(_ value: Any) {
-    lock.lock()
-    defer { lock.unlock() }
+    lock.lock(); defer { lock.unlock() }
     guard !didFinish else { return }
     didFinish = true
     DispatchQueue.main.async { result(value) }
   }
 
-  zebraPrintQueue.async { [weak self] in
-    guard self != nil else { return }
-    if isCancelled() { return }
+  func markDisconnected() {
+    stateLock.lock()
+    needClearOnNextConnect = true
+    stateLock.unlock()
+  }
+
+  func shouldClearNow() -> Bool {
+    stateLock.lock(); defer { stateLock.unlock() }
+    return needClearOnNextConnect
+  }
+
+  func markConnectedAndCleared() {
+    stateLock.lock()
+    needClearOnNextConnect = false
+    stateLock.unlock()
+  }
+
+  zebraPrintQueue.async {
+    if cancelled { return }
 
     guard let connection = TcpPrinterConnection(address: ipAddress, andWithPort: port) else {
-      finish(FlutterError(
-        code: "FAILED_TO_CREATE_CONNECTION",
-        message: "Could not create connection to Zebra printer",
-        details: nil
-      ))
+      finish(FlutterError(code: "FAILED_TO_CREATE_CONNECTION",
+                         message: "Could not create connection to Zebra printer",
+                         details: nil))
       return
     }
 
     var error: NSError?
 
-    if isCancelled() {
-      connection.close()
-      return
-    }
-
     let opened = connection.open()
     if !opened {
       connection.close()
-      finish(FlutterError(
-        code: "FAILED_TO_OPEN_CONNECTION",
-        message: "Could not open connection to Zebra printer",
-        details: nil
-      ))
+      markDisconnected()
+      finish(FlutterError(code: "FAILED_TO_OPEN_CONNECTION",
+                         message: "Could not open connection to Zebra printer",
+                         details: nil))
       return
     }
 
-    // ✅ 1) CLEAR all previous queued formats/jobs in printer buffer
-    if isCancelled() {
-      connection.close()
-      return
-    }
+    // ✅ reconnect => clear buffer 1 lần
+    if shouldClearNow() {
+      var clearErr: NSError?
+      connection.write("~JA".data(using: .utf8)!, error: &clearErr) // Cancel All / clear buffer :contentReference[oaicite:2]{index=2}
 
-    var clearErr: NSError?
-    let clearData = "~JA".data(using: .utf8)!   // Zebra: Cancel All / clear buffer
-    connection.write(clearData, error: &clearErr)
-
-    if let err = clearErr {
-      connection.close()
-      finish(FlutterError(
-        code: "FAILED_TO_CLEAR_BUFFER",
-        message: err.localizedDescription,
-        details: nil
-      ))
-      return
-    }
-
-    do {
-      if isCancelled() {
+      if let err = clearErr {
         connection.close()
+        markDisconnected()
+        finish(FlutterError(code: "FAILED_TO_CLEAR_BUFFER",
+                           message: err.localizedDescription,
+                           details: nil))
         return
       }
 
-      // (tuỳ bạn) phần này có thể bỏ nếu không cần check control language
+      // ✅ delay nhẹ để printer xử lý clear trước khi nhận job mới (driver cũng hay có delay) :contentReference[oaicite:3]{index=3}
+      Thread.sleep(forTimeInterval: 0.1)
+
+      // clear OK => từ giờ coi như connected
+      markConnectedAndCleared()
+    }
+
+    do {
       guard let printer = try ZebraPrinterFactory.getInstance(connection) as? ZebraPrinter else {
         connection.close()
-        finish(FlutterError(
-          code: "FAILED_TO_GET_PRINTER",
-          message: "Unknown error",
-          details: nil
-        ))
+        markDisconnected()
+        finish(FlutterError(code: "FAILED_TO_GET_PRINTER",
+                           message: "Unknown error",
+                           details: nil))
         return
       }
 
       _ = printer.getControlLanguage()
 
-      if isCancelled() {
-        connection.close()
-        return
-      }
-
-      // ✅ 2) Send actual print command
       let data = command.data(using: .utf8) ?? Data()
       connection.write(data, error: &error)
 
       if let err = error {
         connection.close()
-        finish(FlutterError(
-          code: "FAILED_TO_SEND_COMMAND",
-          message: err.localizedDescription,
-          details: nil
-        ))
+        markDisconnected()
+        finish(FlutterError(code: "FAILED_TO_SEND_COMMAND",
+                           message: err.localizedDescription,
+                           details: nil))
         return
       }
 
@@ -182,15 +181,13 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
       finish(true)
     } catch {
       connection.close()
-      finish(FlutterError(
-        code: "FAILED_TO_GET_PRINTER",
-        message: error.localizedDescription,
-        details: nil
-      ))
+      markDisconnected()
+      finish(FlutterError(code: "FAILED_TO_GET_PRINTER",
+                         message: error.localizedDescription,
+                         details: nil))
     }
   }
 
-  // timeout 5s: nếu chưa finish thì trả lỗi (vẫn tuần tự vì chạy trên cùng queue)
   zebraPrintQueue.asyncAfter(deadline: .now() + timeoutSeconds) {
     lock.lock()
     let alreadyFinished = didFinish
@@ -199,11 +196,10 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
 
     guard !alreadyFinished else { return }
 
-    finish(FlutterError(
-      code: "TIMEOUT",
-      message: "Send command timed out after \(Int(timeoutSeconds))s",
-      details: nil
-    ))
+    markDisconnected()
+    finish(FlutterError(code: "TIMEOUT",
+                       message: "Send command timed out after \(Int(timeoutSeconds))s",
+                       details: nil))
   }
 }
 
