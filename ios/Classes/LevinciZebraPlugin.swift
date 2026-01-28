@@ -2,6 +2,8 @@ import Flutter
 import UIKit
 
 public class LevinciZebraPlugin: NSObject, FlutterPlugin {
+  private let zebraPrintQueue = DispatchQueue(label: "com.yourapp.zebra.print.queue")
+  
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
       name: "levinci_zebra", binaryMessenger: registrar.messenger())
@@ -69,72 +71,146 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
     command: String,
     result: @escaping FlutterResult
   ) {
+    let timeoutSeconds: TimeInterval = 5
+
+    // Protect shared flags
+    let lock = NSLock()
+    var didFinish = false
+    var cancelled = false
+
+    func isCancelled() -> Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      return cancelled
+    }
+
+    func finish(_ value: Any) {
+      lock.lock()
+      defer { lock.unlock() }
+      guard !didFinish else { return }
+      didFinish = true
+      DispatchQueue.main.async { result(value) }
+    }
+
+    // giữ connection để timeout có thể close nhằm unblock nhanh
+    var activeConnection: TcpPrinterConnection?
+    let connLock = NSLock()
+
+    func setActiveConnection(_ c: TcpPrinterConnection?) {
+      connLock.lock()
+      defer { connLock.unlock() }
+      activeConnection = c
+    }
+
+  func closeActiveConnection() {
+    connLock.lock()
+    let c = activeConnection
+    activeConnection = nil
+    connLock.unlock()
+    c?.close()
+  }
+
+  zebraPrintQueue.async { [weak self] in
+    guard self != nil else { return }
+    if isCancelled() { return }
+
     guard let connection = TcpPrinterConnection(address: ipAddress, andWithPort: port) else {
-      result(
-        FlutterError(
-          code: "FAILED_TO_CREATE_CONNECTION",
-          message: "Could not create connection to Zebra printer",
-          details: nil
-        )
-      )
+      finish(FlutterError(
+        code: "FAILED_TO_CREATE_CONNECTION",
+        message: "Could not create connection to Zebra printer",
+        details: nil
+      ))
       return
     }
+
+    setActiveConnection(connection)
+    defer { setActiveConnection(nil) }
+
     var error: NSError?
+
+    if isCancelled() {
+      connection.close()
+      return
+    }
 
     let opened = connection.open()
     if !opened {
-      result(
-        FlutterError(
-          code: "FAILED_TO_OPEN_CONNECTION",
-          message: "Could not open connection to Zebra printer",
-          details: nil
-        )
-      )
+      connection.close()
+      finish(FlutterError(
+        code: "FAILED_TO_OPEN_CONNECTION",
+        message: "Could not open connection to Zebra printer",
+        details: nil
+      ))
       return
     }
 
     do {
-      guard let printer = try ZebraPrinterFactory.getInstance(connection) as? ZebraPrinter else {
-        result(
-          FlutterError(
-            code: "FAILED_TO_GET_PRINTER",
-            message: "Unknown error",
-            details: nil
-          )
-        )
+      if isCancelled() {
         connection.close()
         return
       }
-      let _ = printer.getControlLanguage()
-      let data = command.data(using: .utf8)!
+
+      guard let printer = try ZebraPrinterFactory.getInstance(connection) as? ZebraPrinter else {
+        connection.close()
+        finish(FlutterError(
+          code: "FAILED_TO_GET_PRINTER",
+          message: "Unknown error",
+          details: nil
+        ))
+        return
+      }
+
+      _ = printer.getControlLanguage()
+
+      if isCancelled() {
+        connection.close()
+        return
+      }
+
+      let data = command.data(using: .utf8) ?? Data()
       connection.write(data, error: &error)
 
       if let err = error {
-        result(
-          FlutterError(
-            code: "FAILED_TO_SEND_COMMAND",
-            message: err.localizedDescription,
-            details: nil
-          )
-        )
         connection.close()
+        finish(FlutterError(
+          code: "FAILED_TO_SEND_COMMAND",
+          message: err.localizedDescription,
+          details: nil
+        ))
         return
       }
 
       connection.close()
-      result(true)
+      finish(true)
     } catch {
-      result(
-        FlutterError(
-          code: "FAILED_TO_GET_PRINTER",
-          message: error.localizedDescription,
-          details: nil
-        )
-      )
       connection.close()
-      return
+      finish(FlutterError(
+        code: "FAILED_TO_GET_PRINTER",
+        message: error.localizedDescription,
+        details: nil
+      ))
     }
   }
+
+  // Timeout (chạy trên cùng serial queue để giữ tuần tự)
+  zebraPrintQueue.asyncAfter(deadline: .now() + timeoutSeconds) {
+    lock.lock()
+    let alreadyFinished = didFinish
+    if !alreadyFinished { cancelled = true }
+    lock.unlock()
+
+    guard !alreadyFinished else { return }
+
+    // cố gắng close connection để unblock các call đang treo
+    closeActiveConnection()
+
+    finish(FlutterError(
+      code: "TIMEOUT",
+      message: "Send command timed out after \(Int(timeoutSeconds))s",
+      details: nil
+    ))
+  }
+}
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     print(
