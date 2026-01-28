@@ -9,7 +9,7 @@ private let zebraPrintQueue = DispatchQueue(label: "com.yourapp.zebra.print.queu
 private let stateLock = NSLock()
 
 // true = lần trước mất kết nối / lỗi => lần tới connect OK thì clear (~JA) 1 lần
-private var needClearOnNextConnect: Bool = true
+private var needClearOnNextConnect = true
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel( 
@@ -71,8 +71,6 @@ private var needClearOnNextConnect: Bool = true
     print("[DEBUG] Printers by Hops: \(result)")
     return result
   }
-
-  private var needClearOnNextConnect = true
 
 func sendCommand(
   ipAddress: String,
