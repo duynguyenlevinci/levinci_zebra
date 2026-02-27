@@ -27,7 +27,6 @@ class LevinciZebra {
     return LevinciZebraPlatform.instance.discoverByUsb();
   }
 
-
   Future<void> sendCommand(
       {required String ipAddress, required int port, required String command}) {
     return LevinciZebraPlatform.instance
