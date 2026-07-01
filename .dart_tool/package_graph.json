@@ -5,7 +5,7 @@
   "packages": [
     {
       "name": "levinci_zebra",
-      "version": "0.0.1",
+      "version": "1.0.0",
       "dependencies": [
         "flutter",
         "plugin_platform_interface"

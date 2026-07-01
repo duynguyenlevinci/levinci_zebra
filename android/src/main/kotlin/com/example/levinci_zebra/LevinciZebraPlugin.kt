@@ -39,6 +39,20 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
     private const val ACTION_USB_PERMISSION = "com.example.levinci_zebra.USB_PERMISSION"
   }
 
+  private fun printSuccess(result: Result) {
+    result.success(mapOf("success" to true))
+  }
+
+  private fun printFailure(result: Result, errorCode: String, errorMessage: String) {
+    result.success(
+      mapOf(
+        "success" to false,
+        "errorCode" to errorCode,
+        "errorMessage" to errorMessage,
+      )
+    )
+  }
+
   private val usbReceiver = object : BroadcastReceiver() {
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     override fun onReceive(context: Context, intent: Intent) {
@@ -214,7 +228,7 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
         val command = call.argument<String>("command")
 
         if (ipAddress == null || command == null) {
-          result.error("INVALID_ARGUMENT", "IP address and command are required", null)
+          printFailure(result, "INVALID_ARGUMENT", "IP address and command are required")
           return
         }
 
@@ -226,11 +240,11 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
               connection.open()
               connection.write(command.toByteArray())
               android.os.Handler(android.os.Looper.getMainLooper()).post {
-                result.success(null)
+                printSuccess(result)
               }
             } catch (e: Exception) {
               android.os.Handler(android.os.Looper.getMainLooper()).post {
-                result.error("CONNECTION_ERROR", "Error writing to printer: ${e.message}", null)
+                printFailure(result, "CONNECTION_ERROR", "Error writing to printer: ${e.message}")
               }
             } finally {
               try {
@@ -241,7 +255,7 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
             }
           } catch (e: Exception) {
             android.os.Handler(android.os.Looper.getMainLooper()).post {
-              result.error("CONNECTION_ERROR", "Error connecting to printer: ${e.message}", null)
+              printFailure(result, "CONNECTION_ERROR", "Error connecting to printer: ${e.message}")
             }
           }
         }
@@ -253,10 +267,10 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
         val command = call.argument<String>("command")
 
         if (deviceAddress == null || command == null) {
-          result.error(
+          printFailure(
+            result,
             "INVALID_ARGUMENT",
             "Thiếu thông tin: deviceAddress và command là bắt buộc",
-            null
           )
           return
         }
@@ -276,7 +290,7 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
 
             if (targetDevice != null && !usbManager.hasPermission(targetDevice)) {
               android.os.Handler(android.os.Looper.getMainLooper()).post {
-                result.error("PERMISSION_DENIED", "Không có quyền truy cập USB device", null)
+                printFailure(result, "PERMISSION_DENIED", "Không có quyền truy cập USB device")
               }
               return@execute
             }
@@ -302,7 +316,7 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
                 Thread.sleep(200)
 
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                  result.success("Command sent successfully")
+                  printSuccess(result)
                 }
                 return@execute
 
@@ -342,10 +356,10 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
 
                 if (usbPrinters.isEmpty()) {
                   android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    result.error(
+                    printFailure(
+                      result,
                       "PRINTER_NOT_FOUND",
                       "Không tìm thấy máy in với địa chỉ $deviceAddress",
-                      null
                     )
                   }
                   return
@@ -367,11 +381,11 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
                   Thread.sleep(200)
 
                   android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    result.success("Command sent via discovery")
+                    printSuccess(result)
                   }
                 } catch (e: Exception) {
                   android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    result.error("CONNECTION_ERROR", "Lỗi khi gửi lệnh: ${e.message}", null)
+                    printFailure(result, "CONNECTION_ERROR", "Lỗi khi gửi lệnh: ${e.message}")
                   }
                 } finally {
                   try {
@@ -390,7 +404,7 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
                 }
                 println("Discovery error: $message")
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                  result.error("DISCOVERY_ERROR", message, null)
+                  printFailure(result, "DISCOVERY_ERROR", message)
                 }
               }
             }
@@ -413,7 +427,7 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
                 discoveryCompleted = true
                 println("Discovery timeout after ${DISCOVERY_TIMEOUT}ms")
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                  result.error("TIMEOUT", "Timeout khi tìm kiếm máy in USB", null)
+                  printFailure(result, "TIMEOUT", "Timeout khi tìm kiếm máy in USB")
                 }
               }
             }
@@ -421,7 +435,7 @@ class LevinciZebraPlugin : FlutterPlugin, MethodCallHandler {
           } catch (e: Exception) {
             println("Unexpected error in send_command_usb: ${e.message}")
             android.os.Handler(android.os.Looper.getMainLooper()).post {
-              result.error("UNEXPECTED_ERROR", "Lỗi không xác định: ${e.message}", null)
+              printFailure(result, "UNEXPECTED_ERROR", "Lỗi không xác định: ${e.message}")
             }
           } finally {
             // Đảm bảo đóng connection

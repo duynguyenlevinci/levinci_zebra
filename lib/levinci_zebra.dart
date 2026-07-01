@@ -1,3 +1,4 @@
+import 'package:levinci_zebra/models/print_command_result.dart';
 import 'package:levinci_zebra/models/printer.dart';
 
 import 'levinci_zebra_platform_interface.dart';
@@ -27,15 +28,25 @@ class LevinciZebra {
     return LevinciZebraPlatform.instance.discoverByUsb();
   }
 
-  Future<void> sendCommand(
-      {required String ipAddress, required int port, required String command}) {
-    return LevinciZebraPlatform.instance
-        .sendCommand(ipAddress: ipAddress, port: port, command: command);
+  Future<PrintCommandResult> sendCommand({
+    required String ipAddress,
+    required int port,
+    required String command,
+  }) {
+    return LevinciZebraPlatform.instance.sendCommand(
+      ipAddress: ipAddress,
+      port: port,
+      command: command,
+    );
   }
 
-  Future<void> sendCommandUsb(
-      {required String deviceAddress, required String command}) {
-    return LevinciZebraPlatform.instance
-        .sendCommandUsb(deviceAddress: deviceAddress, command: command);
+  Future<PrintCommandResult> sendCommandUsb({
+    required String deviceAddress,
+    required String command,
+  }) {
+    return LevinciZebraPlatform.instance.sendCommandUsb(
+      deviceAddress: deviceAddress,
+      command: command,
+    );
   }
 }
