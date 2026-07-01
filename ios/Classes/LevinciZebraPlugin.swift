@@ -69,7 +69,20 @@ public class LevinciZebraPlugin: NSObject, FlutterPlugin {
     return result
   }
 
-func sendCommand(
+  // MARK: - Print command response helpers
+  private func printSuccess() -> [String: Any] {
+    return ["success": true]
+  }
+
+  private func printFailure(code: String, message: String) -> [String: Any] {
+    return [
+      "success": false,
+      "errorCode": code,
+      "errorMessage": message,
+    ]
+  }
+
+  func sendCommand(
   ipAddress: String,
   port: Int,
   command: String,
@@ -103,15 +116,15 @@ func sendCommand(
 
       guard !alreadyFinished else { return }
 
-      finish(FlutterError(code: "TIMEOUT",
-                         message: "Send command timed out after \(Int(timeoutSeconds))s during execution",
-                         details: nil))
+      finish(self.printFailure(
+        code: "TIMEOUT",
+        message: "Send command timed out after \(Int(timeoutSeconds))s during execution"))
     }
 
     guard let connection = TcpPrinterConnection(address: ipAddress, andWithPort: port) else {
-      finish(FlutterError(code: "FAILED_TO_CREATE_CONNECTION",
-                         message: "Could not create connection to Zebra printer",
-                         details: nil))
+      finish(self.printFailure(
+        code: "FAILED_TO_CREATE_CONNECTION",
+        message: "Could not create connection to Zebra printer"))
       return
     }
 
@@ -129,9 +142,9 @@ func sendCommand(
       // ✅ Set flag on failure to clear buffer on next retry
       LevinciZebraPlugin.shouldClearBufferOnNextSuccess = true
       connection.close()
-      finish(FlutterError(code: "FAILED_TO_OPEN_CONNECTION",
-                         message: "Could not open connection to Zebra printer",
-                         details: nil))
+      finish(self.printFailure(
+        code: "FAILED_TO_OPEN_CONNECTION",
+        message: "Could not open connection to Zebra printer"))
       return
     }
 
@@ -145,9 +158,9 @@ func sendCommand(
         print("[DEBUG] Failed to clear buffer: \(err.localizedDescription)")
         LevinciZebraPlugin.shouldClearBufferOnNextSuccess = true // Retry next time
         connection.close()
-        finish(FlutterError(code: "FAILED_TO_CLEAR_BUFFER",
-                           message: err.localizedDescription,
-                           details: nil))
+        finish(self.printFailure(
+          code: "FAILED_TO_CLEAR_BUFFER",
+          message: err.localizedDescription))
         return
       }
 
@@ -168,9 +181,9 @@ func sendCommand(
     do {
       guard let printer = try ZebraPrinterFactory.getInstance(connection) as? ZebraPrinter else {
         connection.close()
-        finish(FlutterError(code: "FAILED_TO_GET_PRINTER",
-                           message: "Unknown error",
-                           details: nil))
+        finish(self.printFailure(
+          code: "FAILED_TO_GET_PRINTER",
+          message: "Unknown error"))
         return
       }
 
@@ -188,21 +201,21 @@ func sendCommand(
 
       if let err = error {
         connection.close()
-        finish(FlutterError(code: "FAILED_TO_SEND_COMMAND",
-                           message: err.localizedDescription,
-                           details: nil))
+        finish(self.printFailure(
+          code: "FAILED_TO_SEND_COMMAND",
+          message: err.localizedDescription))
         return
       }
 
       connection.close()
-      finish(true)
+      finish(self.printSuccess())
     } catch {
       // ✅ Set flag on failure
       LevinciZebraPlugin.shouldClearBufferOnNextSuccess = true
       connection.close()
-      finish(FlutterError(code: "FAILED_TO_GET_PRINTER",
-                         message: error.localizedDescription,
-                         details: nil))
+      finish(self.printFailure(
+        code: "FAILED_TO_GET_PRINTER",
+        message: error.localizedDescription))
     }
   }
 
@@ -272,7 +285,7 @@ func sendCommand(
         let port = args["port"] as? Int,
         let command = args["command"] as? String
       else {
-        result(FlutterError(code: "INVALID_ARGUMENTS", message: "Expected arguments", details: nil))
+        result(self.printFailure(code: "INVALID_ARGUMENT", message: "Expected arguments"))
         return
       }
       sendCommand(ipAddress: ipAddress, port: port, command: command, result: result)

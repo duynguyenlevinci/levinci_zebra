@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import 'models/print_command_result.dart';
 import 'models/printer.dart';
 import 'levinci_zebra_platform_interface.dart';
 
@@ -64,16 +65,22 @@ class MethodChannelLevinciZebra extends LevinciZebraPlatform {
   }
 
   @override
-  Future<void> sendCommand({
+  Future<PrintCommandResult> sendCommand({
     required String ipAddress,
     int? port,
     required String command,
   }) async {
-    await methodChannel.invokeMethod<void>('send_command', <String, dynamic>{
-      'ipAddress': ipAddress,
-      'port': port,
-      'command': command,
-    });
+    final response = await methodChannel.invokeMethod<dynamic>(
+      'send_command',
+      <String, dynamic>{
+        'ipAddress': ipAddress,
+        'port': port,
+        'command': command,
+      },
+    );
+    return PrintCommandResult.fromMap(
+      Map<String, dynamic>.from(response as Map),
+    );
   }
 
   @override
@@ -88,12 +95,19 @@ class MethodChannelLevinciZebra extends LevinciZebraPlatform {
   }
 
   @override
-  Future<void> sendCommandUsb(
-      {required String deviceAddress, required String command}) {
-    return methodChannel
-        .invokeMethod<void>('send_command_usb', <String, dynamic>{
-      'deviceAddress': deviceAddress,
-      'command': command,
-    });
+  Future<PrintCommandResult> sendCommandUsb({
+    required String deviceAddress,
+    required String command,
+  }) async {
+    final response = await methodChannel.invokeMethod<dynamic>(
+      'send_command_usb',
+      <String, dynamic>{
+        'deviceAddress': deviceAddress,
+        'command': command,
+      },
+    );
+    return PrintCommandResult.fromMap(
+      Map<String, dynamic>.from(response as Map),
+    );
   }
 }

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 
@@ -6,14 +7,19 @@ import 'package:levinci_zebra/levinci_zebra.dart';
 import 'package:levinci_zebra/models/printer.dart';
 
 void main() {
-  runZonedGuarded(() {
-    WidgetsFlutterBinding.ensureInitialized();
+  runZonedGuarded(
+    () {
+      WidgetsFlutterBinding.ensureInitialized();
 
-    runApp(const MyApp());
-  }, (error, stack) {
-    print(error);
-    print(stack);
-  });
+      runApp(const MyApp());
+    },
+    (error, stack) {
+      if (kDebugMode) {
+        print(error);
+        print(stack);
+      }
+    },
+  );
 }
 
 class MyApp extends StatefulWidget {
@@ -28,10 +34,8 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(
-          title: const Text('Plugin example app'),
-        ),
-        body: Body(),
+        appBar: AppBar(title: const Text('Plugin example app')),
+        body: const Body(),
       ),
     );
   }
@@ -49,8 +53,9 @@ class _BodyState extends State<Body> {
   final _levinciZebraPlugin = LevinciZebra();
   List<DiscoveredPrinter> _devices = [];
   DiscoveredPrinter? _selectedPrinter;
-  final TextEditingController _commandController =
-      TextEditingController(text: '^XA^FO50,50^ADN,36,20^FDHello Zebra!^FS^XZ');
+  final TextEditingController _commandController = TextEditingController(
+    text: '^XA^FO50,50^ADN,36,20^FDHello Zebra!^FS^XZ',
+  );
 
   @override
   void initState() {
@@ -64,7 +69,8 @@ class _BodyState extends State<Body> {
     // Platform messages may fail, so we use a try/catch PlatformException.
     // We also handle the message potentially returning null.
     try {
-      platformVersion = await _levinciZebraPlugin.getPlatformVersion() ??
+      platformVersion =
+          await _levinciZebraPlugin.getPlatformVersion() ??
           'Unknown platform version';
     } on PlatformException {
       platformVersion = 'Failed to get platform version.';
@@ -82,13 +88,11 @@ class _BodyState extends State<Body> {
 
   Future<void> discoverByLan() async {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Discovering printers by LAN...'),
-      ),
+      const SnackBar(content: Text('Discovering printers by LAN...')),
     );
     print('[DEBUG] Flutter: discoverByLan button pressed');
     final devices = await _levinciZebraPlugin.discoverByLan();
-    print('[DEBUG] Flutter: discoverByLan result: ' + devices.toString());
+    print('[DEBUG] Flutter: discoverByLan result: $devices');
     setState(() {
       _devices = devices ?? [];
       _selectedPrinter = null;
@@ -97,13 +101,11 @@ class _BodyState extends State<Body> {
 
   Future<void> discoverByBroadcast() async {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Discovering printers by broadcast...'),
-      ),
+      const SnackBar(content: Text('Discovering printers by broadcast...')),
     );
     print('[DEBUG] Flutter: discoverByBroadcast button pressed');
     final devices = await _levinciZebraPlugin.discoverByBroadcast();
-    print('[DEBUG] Flutter: discoverByBroadcast result: ' + devices.toString());
+    print('[DEBUG] Flutter: discoverByBroadcast result: $devices');
     setState(() {
       _devices = devices ?? [];
       _selectedPrinter = null;
@@ -112,14 +114,15 @@ class _BodyState extends State<Body> {
 
   Future<void> discoverByHops(int hops) async {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Discovering printers by hops = $hops...'),
-      ),
+      SnackBar(content: Text('Discovering printers by hops = $hops...')),
     );
-    print('[DEBUG] Flutter: discoverByHops button pressed, hops = ' +
-        hops.toString());
+    if (kDebugMode) {
+      print('[DEBUG] Flutter: discoverByHops button pressed, hops = $hops');
+    }
     final devices = await _levinciZebraPlugin.discoverByHops(hops: hops);
-    print('[DEBUG] Flutter: discoverByHops result: ' + devices.toString());
+    if (kDebugMode) {
+      print('[DEBUG] Flutter: discoverByHops result: $devices');
+    }
     setState(() {
       _devices = devices ?? [];
       _selectedPrinter = null;
@@ -128,26 +131,30 @@ class _BodyState extends State<Body> {
 
   Future<void> sendPrintCommand() async {
     if (_selectedPrinter == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please select a printer!')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Please select a printer!')));
       return;
     }
     final ip = _selectedPrinter!.address;
     final port = _selectedPrinter!.port ?? 9100;
     final command = _commandController.text;
-    try {
-      await _levinciZebraPlugin.sendCommand(
-        ipAddress: ip,
-        port: port,
-        command: command,
-      );
+    final printResult = await _levinciZebraPlugin.sendCommand(
+      ipAddress: ip,
+      port: port,
+      command: command,
+    );
+    if (printResult.success) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Print command sent successfully!')),
+        const SnackBar(content: Text('Print command sent successfully!')),
       );
-    } catch (e) {
+    } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send print command: $e')),
+        SnackBar(
+          content: Text(
+            'Failed to send print command: ${printResult.errorMessage ?? printResult.errorCode ?? "Unknown error"}',
+          ),
+        ),
       );
     }
   }
@@ -160,16 +167,19 @@ class _BodyState extends State<Body> {
         children: [
           Text('Running on: $_platformVersion\n'),
           ElevatedButton(
-              onPressed: discoverByLan,
-              child: Text('Discover Printers By LAN')),
+            onPressed: discoverByLan,
+            child: const Text('Discover Printers By LAN'),
+          ),
           ElevatedButton(
-              onPressed: discoverByBroadcast,
-              child: Text('Discover Printers By Broadcast')),
+            onPressed: discoverByBroadcast,
+            child: const Text('Discover Printers By Broadcast'),
+          ),
           ElevatedButton(
-              onPressed: () => discoverByHops(2),
-              child: Text('Discover Printers By Hops = 2')),
+            onPressed: () => discoverByHops(2),
+            child: const Text('Discover Printers By Hops = 2'),
+          ),
           const SizedBox(height: 16),
-          Text('Devices:'),
+          const Text('Devices:'),
           Expanded(
             child: ListView.builder(
               itemCount: _devices.length,
@@ -185,7 +195,7 @@ class _BodyState extends State<Body> {
                     });
                   },
                   trailing: selected
-                      ? Icon(Icons.check_circle, color: Colors.green)
+                      ? const Icon(Icons.check_circle, color: Colors.green)
                       : null,
                 );
               },
@@ -197,7 +207,7 @@ class _BodyState extends State<Body> {
             onTapOutside: (event) {
               FocusScope.of(context).unfocus();
             },
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               labelText: 'Print Command (ZPL)',
               border: OutlineInputBorder(),
             ),
@@ -207,13 +217,13 @@ class _BodyState extends State<Body> {
           const SizedBox(height: 8),
           ElevatedButton(
             onPressed: () {
-//               _commandController.text = '''
-// ^XA
-// ^FO100,100
-// ^BUN,100,Y,N
-// ^FD012345678905^FS
-// ^XZ
-// ''';
+              //               _commandController.text = '''
+              // ^XA
+              // ^FO100,100
+              // ^BUN,100,Y,N
+              // ^FD012345678905^FS
+              // ^XZ
+              // ''';
               _commandController.text = '''
 ^XA
 ^BY2,3,10
@@ -223,15 +233,13 @@ class _BodyState extends State<Body> {
 ^XZ
   ''';
             },
-            child: Text('Dán lệnh in mã UPC-A mẫu'),
+            child: const Text('Dán lệnh in mã UPC-A mẫu'),
           ),
           ElevatedButton(
             onPressed: sendPrintCommand,
-            child: Text('Send Print Command'),
+            child: const Text('Send Print Command'),
           ),
-          SizedBox(
-            height: 20,
-          )
+          const SizedBox(height: 20),
         ],
       ),
     );

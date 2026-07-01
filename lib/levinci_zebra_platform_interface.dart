@@ -1,3 +1,4 @@
+import 'package:levinci_zebra/models/print_command_result.dart';
 import 'package:levinci_zebra/models/printer.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
@@ -36,13 +37,13 @@ abstract class LevinciZebraPlatform extends PlatformInterface {
   Future<List<DiscoveredPrinter>?> discoverByBroadcast();
   Future<List<DiscoveredPrinter>?> discoverByHops({required int hops});
 
-  Future<void> sendCommand({
+  Future<PrintCommandResult> sendCommand({
     required String ipAddress,
     required int port,
     required String command,
   });
 
-  Future<void> sendCommandUsb({
+  Future<PrintCommandResult> sendCommandUsb({
     required String deviceAddress,
     required String command,
   });
